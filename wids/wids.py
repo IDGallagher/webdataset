@@ -321,18 +321,15 @@ def hash_localname(dldir="/tmp/_wids_cache"):
 
     return f
 
+def _get_local_name(cachedir, shard):
+    """Given a URL, return a local name for the shard."""
+    path = urlparse(shard).path
+    fname = os.path.basename(path)
+    return os.path.join(cachedir, fname)
 
 def cache_localname(cachedir):
     os.makedirs(cachedir, exist_ok=True)
-
-    def f(shard):
-        """Given a URL, return a local name for the shard."""
-        path = urlparse(shard).path
-        fname = os.path.basename(path)
-        return os.path.join(cachedir, fname)
-
-    return f
-
+    return partial(_get_local_name, cachedir)
 
 def default_localname(dldir="/tmp/_wids_cache"):
     os.makedirs(dldir, exist_ok=True)
