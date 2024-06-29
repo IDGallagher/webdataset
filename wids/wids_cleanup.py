@@ -7,8 +7,7 @@ in bytes and the maximum number of files to keep.
 
 The cleanup job can be run in the background using `create_cleanup_background_process`.
 """
-
-import fcntl
+import sys
 import glob
 import os
 import time
@@ -50,27 +49,50 @@ def keep_most_recent_files(pattern, maxsize=int(1e12), maxfiles=1000, debug=Fals
         except FileNotFoundError:
             pass
 
+if sys.platform == "win32":
+    import msvcrt
+    class ExclusiveLock:
+        def __init__(self, lockfile):
+            self.lockfile = lockfile
+            self.lock = None
 
-class ExclusiveLock:
-    """A simple non-blocking exclusive lock using fcntl."""
-
-    def __init__(self, lockfile):
-        self.lockfile = lockfile
-
-    def try_lock(self):
-        try:
-            self.lock = open(self.lockfile, "w")
-            fcntl.flock(self.lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError as e:
-            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+        def try_lock(self):
+            try:
+                self.lock = open(self.lockfile, "w")
+                msvcrt.locking(self.lock.fileno(), msvcrt.LK_NBLCK, 1)
+                return True
+            except IOError:
+                if self.lock:
+                    self.lock.close()
                 return False
-            else:
-                raise
 
-    def release_lock(self):
-        self.lock.close()
-        os.unlink(self.lockfile)
+        def release_lock(self):
+            if self.lock:
+                msvcrt.locking(self.lock.fileno(), msvcrt.LK_UNLCK, 1)
+                self.lock.close()
+                os.unlink(self.lockfile)
+else:
+    import fcntl
+    class ExclusiveLock:
+        """A simple non-blocking exclusive lock using fcntl."""
+
+        def __init__(self, lockfile):
+            self.lockfile = lockfile
+
+        def try_lock(self):
+            try:
+                self.lock = open(self.lockfile, "w")
+                fcntl.flock(self.lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    return False
+                else:
+                    raise
+
+        def release_lock(self):
+            self.lock.close()
+            os.unlink(self.lockfile)
 
 
 def create_cleanup_background_process(

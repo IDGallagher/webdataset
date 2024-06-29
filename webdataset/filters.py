@@ -257,22 +257,38 @@ def _select(data, predicate):
 
 select = pipelinefilter(_select)
 
+if sys.platform == "win32":
+    def _log_keys(data, logfile=None):
+        import msvcrt
+        
+        if logfile is None or logfile == "":
+            yield from data
+        else:
+            with open(logfile, "a") as stream:
+                for i, sample in enumerate(data):
+                    buf = f"{i}\t{sample.get('__worker__')}\t{sample.get('__rank__')}\t{sample.get('__key__')}\n"
+                    try:
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+                        stream.write(buf)
+                    finally:
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    yield sample
+else:
+    def _log_keys(data, logfile=None):
+        import fcntl
 
-def _log_keys(data, logfile=None):
-    import fcntl
-
-    if logfile is None or logfile == "":
-        yield from data
-    else:
-        with open(logfile, "a") as stream:
-            for i, sample in enumerate(data):
-                buf = f"{i}\t{sample.get('__worker__')}\t{sample.get('__rank__')}\t{sample.get('__key__')}\n"
-                try:
-                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-                    stream.write(buf)
-                finally:
-                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-                yield sample
+        if logfile is None or logfile == "":
+            yield from data
+        else:
+            with open(logfile, "a") as stream:
+                for i, sample in enumerate(data):
+                    buf = f"{i}\t{sample.get('__worker__')}\t{sample.get('__rank__')}\t{sample.get('__key__')}\n"
+                    try:
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+                        stream.write(buf)
+                    finally:
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    yield sample
 
 
 log_keys = pipelinefilter(_log_keys)

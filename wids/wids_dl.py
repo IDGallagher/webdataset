@@ -1,4 +1,4 @@
-import fcntl
+
 import os
 import shutil
 import sys
@@ -12,29 +12,46 @@ recent_downloads = deque(maxlen=1000)
 open_objects = {}
 max_open_objects = 100
 
+if sys.platform == "win32":
+    import msvcrt
+    class ULockFile:
+        def __init__(self, path):
+            self.lockfile_path = path
+            self.lockfile = None
 
-class ULockFile:
-    """A simple locking class. We don't need any of the third
-    party libraries since we rely on POSIX semantics for linking
-    below anyway."""
+        def __enter__(self):
+            self.lockfile = open(self.lockfile_path, "w")
+            msvcrt.locking(self.lockfile.fileno(), msvcrt.LK_LOCK, os.path.getsize(self.lockfile_path))
+            return self
 
-    def __init__(self, path):
-        self.lockfile_path = path
-        self.lockfile = None
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            msvcrt.locking(self.lockfile.fileno(), msvcrt.LK_UNLCK, os.path.getsize(self.lockfile_path))
+            self.lockfile.close()
+            self.lockfile = None
+else:
+    import fcntl
+    class ULockFile:
+        """A simple locking class. We don't need any of the third
+        party libraries since we rely on POSIX semantics for linking
+        below anyway."""
 
-    def __enter__(self):
-        self.lockfile = open(self.lockfile_path, "w")
-        fcntl.flock(self.lockfile.fileno(), fcntl.LOCK_EX)
-        return self
+        def __init__(self, path):
+            self.lockfile_path = path
+            self.lockfile = None
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        fcntl.flock(self.lockfile.fileno(), fcntl.LOCK_UN)
-        self.lockfile.close()
-        self.lockfile = None
-        try:
-            os.unlink(self.lockfile_path)
-        except FileNotFoundError:
-            pass
+        def __enter__(self):
+            self.lockfile = open(self.lockfile_path, "w")
+            fcntl.flock(self.lockfile.fileno(), fcntl.LOCK_EX)
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            fcntl.flock(self.lockfile.fileno(), fcntl.LOCK_UN)
+            self.lockfile.close()
+            self.lockfile = None
+            try:
+                os.unlink(self.lockfile_path)
+            except FileNotFoundError:
+                pass
 
 
 def pipe_download(remote, local):

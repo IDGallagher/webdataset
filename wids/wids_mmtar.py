@@ -1,9 +1,9 @@
 import collections
-import fcntl
 import io
 import mmap
 import os
 import struct
+import sys
 
 TarHeader = collections.namedtuple(
     "TarHeader",
@@ -118,33 +118,63 @@ class MMIndexedTar:
         fname, data = self.get_at_index(i)
         return fname, io.BytesIO(data)
 
+if sys.platform == "win32":
+    import msvcrt
+    def keep_while_reading(fname, fd, phase, delay=0.0):
+        """This is a possible cleanup callback for cleanup_callback of MIndexedTar.
 
-def keep_while_reading(fname, fd, phase, delay=0.0):
-    """This is a possible cleanup callback for cleanup_callback of MIndexedTar.
+        It assumes that as long as there are some readers for a file,
+        more readers may be trying to open it.
 
-    It assumes that as long as there are some readers for a file,
-    more readers may be trying to open it.
+        Note that on Windows, unlinking the file doesn't matter after
+        it has been mmapped. The contents will only be deleted when
+        all readers close the file. The unlinking merely makes the file
+        unavailable to new readers, since the downloader checks first
+        whether the file exists.
+        """
+        assert delay == 0.0, "delay not implemented"
+        if fd < 0 or fname is None:
+            return
+        if phase == "start":
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        elif phase == "end":
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                os.unlink(fname)
+            except OSError:
+                # someone else deleted it already or we couldn't get an exclusive lock
+                pass
+        else:
+            raise ValueError(f"Unknown phase {phase}")
+else:
+    import fcntl
+    def keep_while_reading(fname, fd, phase, delay=0.0):
+        """This is a possible cleanup callback for cleanup_callback of MIndexedTar.
 
-    Note that on Linux, unlinking the file doesn't matter after
-    it has been mmapped. The contents will only be deleted when
-    all readers close the file. The unlinking merely makes the file
-    unavailable to new readers, since the downloader checks first
-    whether the file exists.
-    """
-    assert delay == 0.0, "delay not implemented"
-    if fd < 0 or fname is None:
-        return
-    if phase == "start":
-        fcntl.flock(fd, fcntl.LOCK_SH)
-    elif phase == "end":
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            os.unlink(fname)
-        except FileNotFoundError:
-            # someone else deleted it already
-            pass
-        except BlockingIOError:
-            # we couldn't get an exclusive lock, so someone else is still reading
-            pass
-    else:
-        raise ValueError(f"Unknown phase {phase}")
+        It assumes that as long as there are some readers for a file,
+        more readers may be trying to open it.
+
+        Note that on Linux, unlinking the file doesn't matter after
+        it has been mmapped. The contents will only be deleted when
+        all readers close the file. The unlinking merely makes the file
+        unavailable to new readers, since the downloader checks first
+        whether the file exists.
+        """
+        assert delay == 0.0, "delay not implemented"
+        if fd < 0 or fname is None:
+            return
+        if phase == "start":
+            fcntl.flock(fd, fcntl.LOCK_SH)
+        elif phase == "end":
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                os.unlink(fname)
+            except FileNotFoundError:
+                # someone else deleted it already
+                pass
+            except BlockingIOError:
+                # we couldn't get an exclusive lock, so someone else is still reading
+                pass
+        else:
+            raise ValueError(f"Unknown phase {phase}")
+
